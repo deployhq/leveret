@@ -109,6 +109,7 @@ module Leveret
 
         log.info "[#{incoming_message.delivery_tag}] Exiting child process #{pid}"
         run_before_child_exit_hook
+        flush_own_log
         exit!(0)
       end
 
@@ -137,6 +138,25 @@ module Leveret
       # Timeout::Error is not a StandardError on older rubies, and this runs microseconds before
       # exit! -- there is nothing left to protect by letting anything propagate.
       log.warn "before_child_exit hook failed: #{e.class}: #{e.message}"
+    end
+
+    # Flush OUR OWN log before exit! discards it. This gem's log_file defaults to STDOUT, and a
+    # redirected STDOUT is block-buffered, so `Job returned ...` and `Exiting child process ...`
+    # -- both written in the child, microseconds before exit! -- are usually never written out.
+    #
+    # This is not theoretical. On one production host over two days the log held 4,769
+    # "Forked to child" lines (written by the PARENT, which exits normally and flushes) against
+    # 14 "Job returned" lines (written by the CHILD). 0.3%. The result of virtually every job
+    # this gem has ever run was discarded by its own exit path, which makes the log useless for
+    # the one question it is most often asked: did that job succeed?
+    #
+    # Must run LAST, so it also flushes whatever before_child_exit logged.
+    def flush_own_log
+      device = log.instance_variable_get(:@logdev)
+      io = device.respond_to?(:dev) ? device.dev : nil
+      io.flush if io.respond_to?(:flush)
+    rescue Exception # rubocop:disable Lint/RescueException
+      # Nothing can be reported here -- reporting is what just failed -- and exit! is next.
     end
 
     # Constantize the class name in the payload and execute the job with parameters

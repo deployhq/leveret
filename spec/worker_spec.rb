@@ -57,6 +57,15 @@ describe Leveret::Worker do
       expect { run_hook }.not_to raise_error
     end
 
+    it 'still flushes our own log when the hook itself blows up' do
+      Leveret.configuration.before_child_exit = proc { raise 'sink unavailable' }
+
+      expect do
+        run_hook
+        worker.send(:flush_own_log)
+      end.not_to raise_error
+    end
+
     it 'gives up on a hanging hook instead of blocking the exit forever' do
       stub_const("#{described_class}::CHILD_EXIT_HOOK_TIMEOUT", 0.1)
       Leveret.configuration.before_child_exit = proc { sleep 5 }
@@ -65,6 +74,36 @@ describe Leveret::Worker do
       expect { run_hook }.not_to raise_error
 
       expect(Time.now - started).to be < 2
+    end
+  end
+
+  # The child writes "Job returned ..." and "Exiting child process ..." microseconds before
+  # exit!, and a redirected STDOUT is block-buffered, so without this both are usually lost.
+  describe '#flush_own_log' do
+    # Built BEFORE the logger is stubbed: Worker.new logs while connecting to its queues, so a
+    # stub installed first would be exercised by construction rather than by the method itself.
+    let!(:worker) { Leveret::Worker.new }
+
+    it "flushes the logger's underlying IO" do
+      io = StringIO.new
+      allow(Leveret).to receive(:log).and_return(Logger.new(io))
+      expect(io).to receive(:flush).at_least(:once)
+
+      worker.send(:flush_own_log)
+    end
+
+    it 'does not raise when the logger exposes no flushable device' do
+      allow(Leveret).to receive(:log).and_return(double('logger'))
+
+      expect { worker.send(:flush_own_log) }.not_to raise_error
+    end
+
+    it 'does not raise when flushing itself fails' do
+      io = StringIO.new
+      allow(io).to receive(:flush).and_raise(IOError, 'stream closed')
+      allow(Leveret).to receive(:log).and_return(Logger.new(io))
+
+      expect { worker.send(:flush_own_log) }.not_to raise_error
     end
   end
 end
