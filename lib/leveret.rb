@@ -1,6 +1,13 @@
 require 'bunny'
 require 'json'
 require 'logger'
+# Queue, Worker and DelayQueue all `extend Forwardable`, but nothing required it. Loading the gem
+# standalone (its own spec suite) therefore failed with an uninitialized-constant error; under
+# Rails it only ever worked because ActiveSupport happens to require forwardable first.
+require 'forwardable'
+# Worker#run_before_child_exit_hook bounds the host application's hook. Required explicitly
+# rather than relying on bunny pulling it in transitively.
+require 'timeout'
 
 require 'leveret/configuration'
 require 'leveret/delay_queue'

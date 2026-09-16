@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  rspec:
+    name: rspec (ruby ${{ matrix.ruby }})${{ matrix.advisory && ' [advisory]' || '' }}
+    runs-on: ${{ matrix.os }}
+    # 3.4 reports but does not gate, so a failure there cannot block a fix for the 2.7
+    # that actually runs in production. Promote it to required once consumers have moved.
+    continue-on-error: ${{ matrix.advisory || false }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Ruby DeployHQ runs today. This one gates.
+          - ruby: '2.7'
+            os: ubuntu-22.04   # setup-ruby ships no 2.7 build for ubuntu-24.04
+            # 2.4.22 is the last bundler line that supports Ruby 2.7; anything newer
+            # requires >= 3.2 and fails to install. This is the same pin the consuming
+            # app documents. Do NOT drop to 1.17.3 -- it has a default-gem activation
+            # bug that has caused production deploy outages there.
+            bundler: '2.4.22'
+          # Where the app is heading; advisory until that upgrade lands.
+          - ruby: '3.4'
+            os: ubuntu-24.04
+            bundler: 'latest'
+            advisory: true
+
+    services:
+      rabbitmq:
+        # The suite is not hermetic -- spec_helper purges real queues through Bunny, so a
+        # broker has to be up before any example runs.
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+        env:
+          # NOT guest. RabbitMQ restricts guest to loopback, and a service container is
+          # reached over the docker bridge, so guest authentication is refused.
+          RABBITMQ_DEFAULT_USER: leveret
+          RABBITMQ_DEFAULT_PASS: leveret
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          # Let setup-ruby install bundler, so the version is pinned per Ruby (see matrix)
+          # rather than resolved at run time. A bare `gem install bundler` picks the newest
+          # release, which on 2.7 is one that refuses to install.
+          bundler: ${{ matrix.bundler }}
+          # No bundler-cache: this gem deliberately ships no Gemfile.lock, so there is no
+          # stable key to cache against. The dependency set is small.
+          bundler-cache: false
+
+      - name: Install dependencies
+        run: |
+          bundle --version
+          bundle install --jobs 4 --retry 3
+
+      - name: rspec
+        env:
+          LEVERET_AMQP_URL: amqp://leveret:leveret@localhost:5672
+        run: bundle exec rspec --format documentation
