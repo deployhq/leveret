@@ -1,0 +1,47 @@
+PATH
+  remote: .
+  specs:
+    leveret (0.1.6)
+      bunny
+      json
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    amq-protocol (2.7.0)
+    bunny (3.0.0)
+      amq-protocol (~> 2.7)
+      logger (~> 1, >= 1.7)
+      sorted_set (~> 1, >= 1.0.2)
+    diff-lcs (1.6.2)
+    json (3.0.2)
+    logger (1.7.0)
+    rake (13.4.2)
+    rbtree (0.4.7)
+    rspec (3.13.2)
+      rspec-core (~> 3.13.0)
+      rspec-expectations (~> 3.13.0)
+      rspec-mocks (~> 3.13.0)
+    rspec-core (3.13.6)
+      rspec-support (~> 3.13.0)
+    rspec-expectations (3.13.5)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-mocks (3.13.8)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-support (3.13.7)
+    sorted_set (1.1.0)
+      rbtree
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  bundler
+  leveret!
+  rake
+  rspec
+
+BUNDLED WITH
+   2.1.4

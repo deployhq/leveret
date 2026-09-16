@@ -30,11 +30,19 @@ module Leveret
   #   @return [Proc] A proc which will be executed in a child after forking to process a message. Default: +proc {}+
   # @!attribute error_handler
   #   @return [Proc] A proc which will be called if a job raises an exception. Default: +proc {|ex| ex }+
+  # @!attribute before_child_exit
+  #   @return [Proc] A proc executed in the child immediately before it exits, after the message has been
+  #     acknowledged. The child leaves via +Kernel#exit!+, which skips +at_exit+ and every buffer with it, so
+  #     any sink that batches in memory (an HTTP log shipper, a metrics client) silently loses whatever the
+  #     job wrote last. Use this hook to flush those. Bounded by
+  #     {Worker::CHILD_EXIT_HOOK_TIMEOUT} and rescued, so a slow sink cannot stop a child exiting.
+  #     Default: +proc {}+
   # @!attribute concurrent_fork_count
   #   @return [Integer] The number of jobs that can be processes simultanously. Default: +1+
   class Configuration
     attr_accessor :amqp, :exchange_name, :queue_name_prefix, :log_file, :log_level, :default_queue_name, :after_fork,
-      :error_handler, :concurrent_fork_count, :delay_exchange_name, :delay_queue_name, :delay_time
+      :error_handler, :concurrent_fork_count, :delay_exchange_name, :delay_queue_name, :delay_time,
+      :before_child_exit
 
     # Create a new instance of Configuration with a set of sane defaults.
     def initialize
@@ -54,6 +62,7 @@ module Leveret
       self.delay_queue_name = 'leveret_delay_queue'
       self.delay_time = 10_000
       self.after_fork = proc {}
+      self.before_child_exit = proc {}
       self.error_handler = proc { |ex| ex }
       self.concurrent_fork_count = 1
     end

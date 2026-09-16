@@ -5,6 +5,11 @@ module Leveret
   class Worker
     extend Forwardable
 
+    # Wall-clock bound on Configuration#before_child_exit. Generous enough for a log shipper to
+    # complete one synchronous HTTP delivery, short enough that an unreachable sink delays a
+    # child's exit by seconds rather than pinning a fork slot.
+    CHILD_EXIT_HOOK_TIMEOUT = 5
+
     # @!attribute queues
     #   @return [Array<Queue>] All of the queues this worker is going to subscribe to
     # @!attribute consumers
@@ -103,11 +108,35 @@ module Leveret
         result_handler.handle(result)
 
         log.info "[#{incoming_message.delivery_tag}] Exiting child process #{pid}"
+        run_before_child_exit_hook
         exit!(0)
       end
 
       # Master doesn't need to know how it all went down, the worker will report it's own status back to the queue
       Process.detach(pid)
+    end
+
+    # Give the host application a chance to flush anything it has buffered before the child
+    # leaves via #exit!.
+    #
+    # #exit! is deliberate -- it skips at_exit handlers that were registered in the PARENT and
+    # inherited across the fork, which must not run once per job. But it skips ALL of them, and
+    # an in-memory buffer flushed by an at_exit handler goes with them. An HTTP log shipper is
+    # the common case: a batching sink relies on `at_exit { close }` to deliver its tail, so the
+    # LAST lines a job writes -- the ones saying whether it succeeded -- are the ones most
+    # reliably lost. Long jobs hide this, because a periodic flush ships everything except the
+    # final batch; short jobs can lose their entire output.
+    #
+    # Runs AFTER the acknowledgement, so a hook that hangs cannot cause redelivery. Bounded and
+    # rescued for the same reason: an unreachable sink must never stop a child exiting, or forks
+    # accumulate until the host runs out of processes. A failed flush costs log lines; a wedged
+    # child costs the worker.
+    def run_before_child_exit_hook
+      Timeout.timeout(CHILD_EXIT_HOOK_TIMEOUT) { configuration.before_child_exit.call }
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      # Timeout::Error is not a StandardError on older rubies, and this runs microseconds before
+      # exit! -- there is nothing left to protect by letting anything propagate.
+      log.warn "before_child_exit hook failed: #{e.class}: #{e.message}"
     end
 
     # Constantize the class name in the payload and execute the job with parameters
